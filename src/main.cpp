@@ -92,17 +92,16 @@ void avrc_metadata_callback(uint8_t data1, const uint8_t *data2)
   // 0x10 总共多少首歌
   // 0x20
 }
-// for esp_a2d_connection_state_t see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/bluetooth/esp_a2dp.html#_CPPv426esp_a2d_connection_state_t
+
 void connection_state_changed(esp_a2d_connection_state_t state, void *ptr)
 {
   Serial.println(a2dp_sink.to_str(state));
 }
 
-// for esp_a2d_audio_state_t see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/bluetooth/esp_a2dp.html#_CPPv421esp_a2d_audio_state_t
+
 void audio_state_changed(esp_a2d_audio_state_t state, void *ptr)
 {
   Serial.println(a2dp_sink.to_str(state));
-    a2dp_sink.getInfo();
 }
 void setup()
 {
@@ -127,7 +126,7 @@ void setup()
 
 void loop()
 {
-  // put your main code here, to run repeatedly:
+  
 }
 
 
