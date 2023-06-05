@@ -8,15 +8,13 @@ TFT_eSPI tft = TFT_eSPI();
 // 下面代码在TFT屏幕输出文字
 int pX = 16;
 int pY = 0;
-int fontsize = 12;      // 字号
+int fontsize = 12; // 字号
 int screenWidth = 160;
-int amountDisplay = int(screenWidth/fontsize); // 每行显示多少汉字，其实这个显示数量应该通过屏幕的宽度来计算字号
-
+int amountDisplay = int(screenWidth / fontsize); // 每行显示多少汉字，其实这个显示数量应该通过屏幕的宽度来计算字号
 
 int singleStrPixsAmount = fontsize * fontsize;
 
 BluetoothA2DPSink a2dp_sink;
-
 
 int seconds = 2;
 uint32_t end = 0;
@@ -53,41 +51,40 @@ void data_receive_callback()
 {
   // Serial.println("data received.");
 }
-String song_singer="";
-String song_album="";
+String song_singer = "";
+String song_album = "";
 void avrc_metadata_callback(uint8_t data1, const uint8_t *data2)
 {
   // Serial.printf("AVRC metadata rsp: attribute id 0x%x, %s\n", data1, data2);
- 
+
   String strData2 = (const char *)data2;
 
   Serial.println(strData2);
   if (data1 == 2)
   {
     // Serial.printf("歌名：%s", data2);
-     if(song_singer!=strData2){
-      tft.fillRect(0,2,400,16,TFT_BLACK);
+    if (song_singer != strData2)
+    {
+      tft.fillRect(0, 2, 400, 24, TFT_BLACK);
       DrawStr(0, 2, "" + strData2, TFT_GREEN);
-      song_singer=strData2;
-
-     }
-    
+      song_singer = strData2;
+    }
   }
   if (data1 == 4)
   {
     // Serial.printf("歌手：%s", data2);
-    if(song_album!=strData2){
-      tft.fillRect(0,18,400,32,TFT_BLACK);
-       DrawStr(0, 18, "" + strData2, TFT_RED);
-      song_album=strData2;
+    if (song_album != strData2)
+    {
+      tft.fillRect(0, 26, 400, 50, TFT_BLACK);
+      DrawStr(0, 26, "" + strData2, TFT_RED);
+      song_album = strData2;
     }
-   
   }
   if (data1 == 1)
   {
     // Serial.printf("专辑：%s", data2);
-    tft.fillRect(0,50,400,100,TFT_BLACK);
-    DrawStr(0, 50, "" + strData2, TFT_DARKGREEN);
+    tft.fillRect(0, 51, 400, 120, TFT_BLACK);
+    DrawStr(0, 51, "" + strData2, TFT_LIGHTGREY);
   }
   // 0x8 第几首歌
   // 0x10 总共多少首歌
@@ -98,7 +95,6 @@ void connection_state_changed(esp_a2d_connection_state_t state, void *ptr)
 {
   Serial.println(a2dp_sink.to_str(state));
 }
-
 
 void audio_state_changed(esp_a2d_audio_state_t state, void *ptr)
 {
@@ -112,7 +108,7 @@ void setup()
   a2dp_sink.set_rssi_callback(rssi);
   a2dp_sink.set_on_data_received(data_receive_callback);
   a2dp_sink.set_stream_reader(read_data_stream, false);
-  a2dp_sink.set_avrc_metadata_attribute_mask(ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM | ESP_AVRC_MD_ATTR_TRACK_NUM | ESP_AVRC_MD_ATTR_NUM_TRACKS  );
+  a2dp_sink.set_avrc_metadata_attribute_mask(ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM | ESP_AVRC_MD_ATTR_TRACK_NUM | ESP_AVRC_MD_ATTR_NUM_TRACKS);
   // a2dp_sink.
   a2dp_sink.set_avrc_metadata_callback(avrc_metadata_callback);
   a2dp_sink.set_on_connection_state_changed(connection_state_changed);
@@ -127,10 +123,7 @@ void setup()
 
 void loop()
 {
-  
 }
-
-
 
 void DrawStr(int x = 0, int y = 0, String str = "星算", int color = TFT_GREEN)
 {
