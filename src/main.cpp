@@ -8,9 +8,10 @@ TFT_eSPI tft = TFT_eSPI();
 // 下面代码在TFT屏幕输出文字
 int pX = 16;
 int pY = 0;
-int fontsize = 16;      // 字号
-int amountDisplay = 10; // 每行显示多少汉字，其实这个显示数量应该通过屏幕的宽度来计算字号
+int fontsize = 12;      // 字号
 int screenWidth = 160;
+int amountDisplay = int(screenWidth/fontsize); // 每行显示多少汉字，其实这个显示数量应该通过屏幕的宽度来计算字号
+
 
 int singleStrPixsAmount = fontsize * fontsize;
 
