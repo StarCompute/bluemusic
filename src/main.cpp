@@ -2,7 +2,7 @@
 #include "a2dp/BluetoothA2DPSink.h"
 #include <TFT_eSPI.h>
 #include <LittleFS.h>
-#include "common.h"
+
 
 TFT_eSPI tft = TFT_eSPI();
 // 下面代码在TFT屏幕输出文字
@@ -10,6 +10,10 @@ int pX = 16;
 int pY = 0;
 int fontsize = 12; // 字号
 int screenWidth = 160;
+
+#include "common.h"
+
+
 int amountDisplay = int(screenWidth / fontsize); // 每行显示多少汉字，其实这个显示数量应该通过屏幕的宽度来计算字号
 
 int singleStrPixsAmount = fontsize * fontsize;
@@ -132,6 +136,7 @@ void DrawStr(int x = 0, int y = 0, String str = "星算", int color = TFT_GREEN)
 
   // 下面的代码显示对应的汉字在TFT屏幕上
   String strBinData = getPixBinStrFromString(str, "/x.font");
+  singleStrPixsAmount = fontsize * fontsize;
   amountDisplay = screenWidth / fontsize; // 如果不愿意动态计算显示数量可以注释调这一行
   int l1 = singleStrPixsAmount * amountDisplay;
   int l2 = fontsize * amountDisplay;

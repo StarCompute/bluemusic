@@ -198,7 +198,6 @@ String getPixBinStrFromString(String displayString,String fontPath)
     int total_font_cnt = strtoll(s1.c_str(), NULL, 16);
     int font_size = s2.toInt();
 
-
     // Serial.println(s1);
     // Serial.println(total_font_cnt);
     // Serial.println(font_size);
