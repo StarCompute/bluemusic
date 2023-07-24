@@ -14,6 +14,7 @@ int screenWidth = 160;
 #include "common.h"
 
 
+
 int amountDisplay = int(screenWidth / fontsize); // 每行显示多少汉字，其实这个显示数量应该通过屏幕的宽度来计算字号
 
 int singleStrPixsAmount = fontsize * fontsize;
@@ -104,6 +105,7 @@ void audio_state_changed(esp_a2d_audio_state_t state, void *ptr)
 {
   Serial.println(a2dp_sink.to_str(state));
 }
+ 
 void setup()
 {
 
@@ -118,17 +120,22 @@ void setup()
   a2dp_sink.set_on_connection_state_changed(connection_state_changed);
   a2dp_sink.set_on_audio_state_changed(audio_state_changed);
   a2dp_sink.start("my music");
-
+  
   tft.begin();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_GREEN);
-  DrawStr(0, 2, "欢迎使用。本字库囊括了七千个汉字和日常需要使用的字母和数字。" , TFT_GREEN);
+  // pinMode(16, OUTPUT);
+
+  DrawStr(0, 2, "欢迎使用。本字库囊括了七千个汉字和日常需要使用的字母和数字。", TFT_GREEN);
+ 
+ 
+
 }
 
 void loop()
 {
-  delay(1);
+  delay(100);
 }
 
 void DrawStr(int x = 0, int y = 0, String str = "星算", int color = TFT_GREEN)
