@@ -125,8 +125,8 @@ void setup()
   a2dp_sink.set_on_audio_state_changed(audio_state_changed);
   i2s_pin_config_t my_pin_config = {
         .bck_io_num = 32,//输入
-        .ws_io_num = 25,//输入
-        .data_out_num = 22,//输出
+        .ws_io_num = 33,//输入
+        .data_out_num = 23,//输出
         .data_in_num = I2S_PIN_NO_CHANGE
     };
   a2dp_sink.set_pin_config(my_pin_config);
