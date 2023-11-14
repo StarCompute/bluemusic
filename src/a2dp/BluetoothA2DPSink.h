@@ -95,6 +95,8 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     BluetoothA2DPSink();
     /// Destructor - stops the playback and releases all resources
     virtual ~BluetoothA2DPSink();
+
+#if A2DP_I2S_SUPPORT
     /// Define the pins
     virtual void set_pin_config(i2s_pin_config_t pin_config);
    
@@ -103,6 +105,18 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
    
     /// Define the i2s configuration
     virtual void set_i2s_config(i2s_config_t i2s_config);
+
+    /// set output to I2S_CHANNEL_STEREO (default) or I2S_CHANNEL_MONO
+    virtual void set_channels(i2s_channel_t channels) {
+        set_mono_downmix(channels==I2S_CHANNEL_MONO);
+    }
+
+    /// Defines the bits per sample for output (if > 16 output will be expanded)
+    virtual void set_bits_per_sample(int bps) { i2s_config.bits_per_sample = (i2s_bits_per_sample_t) bps; }
+
+    virtual esp_err_t i2s_mclk_pin_select(const uint8_t pin);
+
+#endif
 
     /// starts the I2S bluetooth sink with the inidicated name
     virtual void start(const char* name, bool auto_reconect);
@@ -119,10 +133,22 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     /// Determine the actual audio type
     virtual esp_a2d_mct_t get_audio_type();
 
+    /// Define a callback method which provides connection state of AVRC service
+    virtual void set_avrc_connection_state_callback(void (*callback)(bool)) {
+      this->avrc_connection_state_callback = callback;
+    }
+
     /// Define a callback method which provides the meta data
     virtual void set_avrc_metadata_callback(void (*callback)(uint8_t, const uint8_t*)) {
       this->avrc_metadata_callback = callback;
     }
+
+#ifdef ESP_IDF_4
+    /// Define a callback method which provides the avrc notifications
+    virtual void set_avrc_rn_playstatus_callback(void (*callback)(esp_avrc_playback_stat_t playback)) {
+      this->avrc_rn_playstatus_callback = callback;
+    }
+#endif
 
     /// Defines the method which will be called with the sample rate is updated
     virtual void set_sample_rate_callback(void (*callback)(uint16_t rate)) {
@@ -143,14 +169,23 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
         address_validator = callBack;
     }
 
+    /// returns true if the avrc service is connected
+    virtual bool is_avrc_connected();
+
     /// Changes the volume
     virtual void set_volume(uint8_t volume);
     
     /// Determines the volume
     virtual int get_volume();
 
-    /// Set the callback that is called when they change the volume
+    /// Set the callback that is called when they change the volume (kept for compatibility)
     virtual void set_on_volumechange(void (*callBack)(int));
+
+	/// Set the callback that is called when remote changes the volume
+    virtual void set_avrc_rn_volumechange(void (*callBack)(int));
+
+    /// set the callback that the local volume change is notification is received and complete
+    virtual void set_avrc_rn_volumechange_completed(void (*callBack)(int));
 
     /// Starts to play music using AVRC
     virtual void play();
@@ -167,25 +202,14 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     /// AVRC rewind
     virtual void rewind();
     
-    virtual void getInfo();
-
-    /// set output to I2S_CHANNEL_STEREO (default) or I2S_CHANNEL_MONO
-    virtual void set_channels(i2s_channel_t channels) {
-        set_mono_downmix(channels==I2S_CHANNEL_MONO);
-    }
     /// mix stereo into single mono signal
     virtual void set_mono_downmix(bool enabled) {
         volume_control()->set_mono_downmix(enabled);
     }
-    /// Defines the bits per sample for output (if > 16 output will be expanded)
-    virtual void set_bits_per_sample(int bps) { i2s_config.bits_per_sample = (i2s_bits_per_sample_t) bps; }
     
     /// Provides the actually set data rate (in samples per second)
-    virtual uint16_t sample_rate();
-    
-    /// Defines the pin for the master clock
-    virtual esp_err_t i2s_mclk_pin_select(const uint8_t pin);
-    
+    virtual uint16_t sample_rate() { return m_sample_rate;}
+        
     /// We need to confirm a new seesion by calling confirm_pin_code()
     virtual void activate_pin_code(bool active);
 
@@ -242,8 +266,13 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
         reconnect_delay = delay;
     }
 
+    /// Activates SSP (Serial protocol)
+    void set_spp_active(bool flag){
+        spp_active = flag;
+    }
+
  #ifdef ESP_IDF_4
-    /// Get the name of the connected source device
+    /// Get the name of the connected source device (obsolete)
     virtual const char* get_connected_source_name();
     /// Provides the result of the last result for the esp_avrc_tg_get_rn_evt_cap() callback (Available from ESP_IDF_4)
     bool is_avrc_peer_rn_cap(esp_avrc_rn_event_ids_t cmd) {
@@ -253,6 +282,12 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     bool is_avrc_peer_rn_cap_available() {
         return s_avrc_peer_rn_cap.bits != 0;
     }
+
+    /// Get the name of the connected source device 
+    virtual const char* get_peer_name() {
+        return get_connected_source_name();
+    }
+
  #endif
 
   protected:
@@ -260,25 +295,30 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     xQueueHandle app_task_queue = nullptr;
     xTaskHandle app_task_handle = nullptr;
 
+    bool is_i2s_output = A2DP_I2S_SUPPORT;
+#if A2DP_I2S_SUPPORT
     i2s_config_t i2s_config;
     i2s_pin_config_t pin_config;    
-    const char * bt_name = nullptr;
+    i2s_channel_t i2s_channels = I2S_CHANNEL_STEREO;
+    i2s_port_t i2s_port = I2S_NUM_0; 
+    bool is_i2s_active = false;
+#endif
+    uint16_t m_sample_rate = 0; 
     uint32_t m_pkt_cnt = 0;
     //esp_a2d_audio_state_t m_audio_state = ESP_A2D_AUDIO_STATE_STOPPED;
     esp_a2d_mct_t audio_type;
     char pin_code_str[20] = {0};
-    bool is_i2s_output = true;
     bool player_init = false;
-    i2s_channel_t i2s_channels = I2S_CHANNEL_STEREO;
-    i2s_port_t i2s_port = I2S_NUM_0; 
     int connection_rety_count = 0;
-    static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
+    bool spp_active = false;
+    esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
     _lock_t s_volume_lock;
     uint8_t s_volume = 0;
     bool s_volume_notify;
     int pin_code_int = 0;
     PinCodeRequest pin_code_request = Undefined;
     bool is_pin_code_active = false;
+    bool avrc_connection_state = false;
     int avrc_metadata_flags = ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM | ESP_AVRC_MD_ATTR_TRACK_NUM | ESP_AVRC_MD_ATTR_NUM_TRACKS | ESP_AVRC_MD_ATTR_GENRE;
     void (*bt_volumechange)(int) = nullptr;
     void (*bt_dis_connected)() = nullptr;
@@ -286,11 +326,15 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     void (*data_received)() = nullptr;
     void (*stream_reader)(const uint8_t*, uint32_t) = nullptr;
     void (*raw_stream_reader)(const uint8_t*, uint32_t) = nullptr;
+    void (*avrc_connection_state_callback)(bool connected) = nullptr;
     void (*avrc_metadata_callback)(uint8_t, const uint8_t*) = nullptr;
+#ifdef ESP_IDF_4
+    void (*avrc_rn_playstatus_callback)(esp_avrc_playback_stat_t) = nullptr;
+#endif
+    void (*avrc_rn_volchg_complete_callback)(int) = nullptr;
     bool (*address_validator)(esp_bd_addr_t remote_bda) = nullptr;
     void (*sample_rate_callback)(uint16_t rate)=nullptr;
     bool swap_left_right = false;
-    bool is_i2s_active = false;
     int try_reconnect_max_count = AUTOCONNECT_TRY_NUM;
    
     // RSSI support
@@ -306,14 +350,14 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
 
     // protected methods
     virtual int init_bluetooth();
-    virtual void init_i2s();
     virtual void app_task_start_up(void);
     virtual void app_task_shut_down(void);
-    virtual bool app_send_msg(app_msg_t *msg);
+    virtual bool app_send_msg(bt_app_msg_t *msg);
     virtual bool app_work_dispatch(app_callback_t p_cback, uint16_t event, void *p_params, int param_len);
-    virtual void app_work_dispatched(app_msg_t *msg);
+    virtual void app_work_dispatched(bt_app_msg_t *msg);
     virtual void app_alloc_meta_buffer(esp_avrc_ct_cb_param_t *param);
     virtual void av_new_track();
+    virtual void av_playback_changed();
     virtual void init_nvs();
     // execute AVRC command
     virtual void execute_avrc_command(int cmd);
@@ -352,33 +396,43 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     virtual void handle_connection_state(uint16_t event, void *p_param);
     virtual void handle_audio_state(uint16_t event, void *p_param);
     virtual void handle_audio_cfg(uint16_t event, void *p_param);
+    virtual void handle_avrc_connection_state(bool connected);
 
 
 #ifdef ESP_IDF_4
     virtual void volume_set_by_local_host(uint8_t volume);
     virtual void volume_set_by_controller(uint8_t volume);
-    virtual void av_notify_evt_handler(uint8_t& event_id, esp_avrc_rn_param_t& event_parameter);
+    virtual void av_notify_evt_handler(uint8_t event_id, esp_avrc_rn_param_t* event_parameter);
     virtual void app_rc_tg_callback(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param);
     virtual void av_hdl_avrc_tg_evt(uint16_t event, void *p_param);
 #else
     virtual void av_notify_evt_handler(uint8_t event_id, uint32_t event_parameter);
 #endif    
 
+#if A2DP_I2S_SUPPORT
+    virtual void init_i2s();
+
     /// output audio data e.g. to i2s or to queue
     virtual size_t write_audio(const uint8_t *data, size_t size){
         return i2s_write_data(data, size);
     }
+
+    /// writes the data to i2s
+    size_t i2s_write_data(const uint8_t* data, size_t item_size);
+
 
     /// dummy functions needed for BluetoothA2DPSinkQueued
     virtual void i2s_task_handler(void *arg) {}
     virtual void bt_i2s_task_start_up(void) {}
     virtual void bt_i2s_task_shut_down(void) {}
 
-    /// writes the data to i2s
-    size_t i2s_write_data(const uint8_t* data, size_t item_size);
+#endif
 
     virtual esp_err_t esp_a2d_connect(esp_bd_addr_t peer) {
         return esp_a2d_sink_connect(peer);
+    }
+    void set_scan_mode_connectable_default() override {
+        set_scan_mode_connectable(true);
     }
 
 };

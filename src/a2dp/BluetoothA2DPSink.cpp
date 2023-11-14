@@ -23,6 +23,9 @@ BluetoothA2DPSink* actual_bluetooth_a2dp_sink;
  */
 BluetoothA2DPSink::BluetoothA2DPSink() {
   actual_bluetooth_a2dp_sink = this;
+
+#if A2DP_I2S_SUPPORT
+
   if (is_i2s_output) {
         // default i2s port is 0
         i2s_port = (i2s_port_t) 0;
@@ -59,6 +62,7 @@ BluetoothA2DPSink::BluetoothA2DPSink() {
             .data_in_num = I2S_PIN_NO_CHANGE
         };
     }
+#endif
 #ifdef ESP_IDF_4
     s_avrc_peer_rn_cap.bits = 0;
     _lock_init(&s_volume_lock);
@@ -80,6 +84,7 @@ void BluetoothA2DPSink::end(bool release_memory) {
     app_task_shut_down();
 
     // stop I2S
+#if A2DP_I2S_SUPPORT
     if (is_i2s_output){
         ESP_LOGI(BT_AV_TAG,"uninstall i2s");
         if (i2s_driver_uninstall(i2s_port) != ESP_OK){
@@ -89,9 +94,11 @@ void BluetoothA2DPSink::end(bool release_memory) {
             player_init = false;
         }
     }
+#endif
     log_free_heap();
 }
 
+#if A2DP_I2S_SUPPORT
 
 void BluetoothA2DPSink::set_pin_config(i2s_pin_config_t pin_config){
   this->pin_config = pin_config;
@@ -104,6 +111,8 @@ void BluetoothA2DPSink::set_i2s_port(i2s_port_t i2s_num) {
 void BluetoothA2DPSink::set_i2s_config(i2s_config_t i2s_config){
   this->i2s_config = i2s_config;
 }
+
+#endif
 
 void BluetoothA2DPSink::set_stream_reader(void (*callBack)(const uint8_t*, uint32_t), bool is_i2s){
   this->stream_reader = callBack;
@@ -126,8 +135,17 @@ void BluetoothA2DPSink::set_on_data_received(void (*callBack)()){
 //   this->bt_dis_connected = callBack;
 // }
 
+// kept for backwards compatibility
 void BluetoothA2DPSink::set_on_volumechange(void (*callBack)(int)){
   this->bt_volumechange = callBack;
+}
+
+void BluetoothA2DPSink::set_avrc_rn_volumechange(void (*callBack)(int)){
+  this->bt_volumechange = callBack;
+}
+
+void BluetoothA2DPSink::set_avrc_rn_volumechange_completed(void (*callBack)(int)) {
+    this->avrc_rn_volchg_complete_callback = callBack;
 }
 
 void BluetoothA2DPSink::start(const char* name, bool auto_reconnect){
@@ -157,9 +175,11 @@ void BluetoothA2DPSink::start(const char* name)
     init_nvs();
 
     // reconnect management
+    // grab last connnectiom, even if we dont use it now for auto reconnect
+    get_last_connection();
+
     is_autoreconnect_allowed = true; // allow automatic reconnect
     if (reconnect_status==AutoReconnect){
-        get_last_connection();
         memcpy(peer_bd_addr, last_connection,ESP_BD_ADDR_LEN);
 
         // force disconnect first so that a subsequent connect has a chance to work
@@ -172,8 +192,10 @@ void BluetoothA2DPSink::start(const char* name)
 #endif
     }
 
+#if A2DP_I2S_SUPPORT
     // setup i2s
     init_i2s();
+#endif
 
     // setup bluetooth
     init_bluetooth();
@@ -209,6 +231,8 @@ void BluetoothA2DPSink::start(const char* name)
 
     log_free_heap();
 }
+
+#if A2DP_I2S_SUPPORT
 
 void BluetoothA2DPSink::init_i2s() { 
     ESP_LOGI(BT_AV_TAG,"init_i2s");
@@ -261,7 +285,7 @@ esp_err_t BluetoothA2DPSink::i2s_mclk_pin_select(const uint8_t pin) {
     }
     return ESP_OK;
 }
-
+#endif
 
 bool BluetoothA2DPSink::is_connected() {
     return connection_state == ESP_A2D_CONNECTION_STATE_CONNECTED;
@@ -318,9 +342,11 @@ int BluetoothA2DPSink::init_bluetooth()
         return false;
     }
 
-    if ((esp_spp_init(esp_spp_mode)) != ESP_OK) {
-        ESP_LOGE(BT_AV_TAG,"esp_spp_init failed");
-        return false;
+    if (spp_active){
+        if ((esp_spp_init(esp_spp_mode)) != ESP_OK) {
+            ESP_LOGE(BT_AV_TAG,"esp_spp_init failed");
+            return false;
+        }
     }
 
     return true;
@@ -331,8 +357,8 @@ bool BluetoothA2DPSink::app_work_dispatch(app_callback_t p_cback, uint16_t event
 {
     ESP_LOGD(BT_APP_TAG, "%s event 0x%x, param len %d", __func__, event, param_len);
     
-    app_msg_t msg;
-    memset(&msg, 0, sizeof(app_msg_t));
+    bt_app_msg_t msg;
+    memset(&msg, 0, sizeof(bt_app_msg_t));
 
     msg.sig = APP_SIG_WORK_DISPATCH;
     msg.event = event;
@@ -350,7 +376,7 @@ bool BluetoothA2DPSink::app_work_dispatch(app_callback_t p_cback, uint16_t event
     return false;
 }
 
-void BluetoothA2DPSink::app_work_dispatched(app_msg_t *msg)
+void BluetoothA2DPSink::app_work_dispatched(bt_app_msg_t *msg)
 {
     ESP_LOGD(BT_AV_TAG, "%s", __func__);
     if (msg->cb) {
@@ -359,7 +385,7 @@ void BluetoothA2DPSink::app_work_dispatched(app_msg_t *msg)
 }
 
 
-bool BluetoothA2DPSink::app_send_msg(app_msg_t *msg)
+bool BluetoothA2DPSink::app_send_msg(bt_app_msg_t *msg)
 {
     ESP_LOGD(BT_AV_TAG, "%s", __func__);
     if (msg == NULL || app_task_queue == NULL) {
@@ -378,7 +404,7 @@ bool BluetoothA2DPSink::app_send_msg(app_msg_t *msg)
 void BluetoothA2DPSink::app_task_handler(void *arg)
 {
     ESP_LOGD(BT_AV_TAG, "%s", __func__);
-    app_msg_t msg;
+    bt_app_msg_t msg;
     while (true) {
         if (!app_task_queue){
             ESP_LOGE(BT_APP_TAG, "%s, app_task_queue is null", __func__);
@@ -423,7 +449,7 @@ void BluetoothA2DPSink::app_task_start_up(void)
 {
     ESP_LOGD(BT_AV_TAG, "%s", __func__);
     if (app_task_queue==NULL) 
-        app_task_queue = xQueueCreate(event_queue_size, sizeof(app_msg_t));
+        app_task_queue = xQueueCreate(event_queue_size, sizeof(bt_app_msg_t));
 
     if (app_task_handle==NULL) {
         if (xTaskCreatePinnedToCore(ccall_app_task_handler, "BtAppT", event_stack_size, NULL, task_priority, &app_task_handle, task_core) != pdPASS){
@@ -630,18 +656,18 @@ void BluetoothA2DPSink::handle_audio_cfg(uint16_t event, void *p_param) {
     ESP_LOGI(BT_AV_TAG, "a2dp audio_cfg_cb , codec type %d", a2d->audio_cfg.mcc.type);
 
     // determine sample rate
-    i2s_config.sample_rate = 16000;
+    m_sample_rate = 16000;
     char oct0 = a2d->audio_cfg.mcc.cie.sbc[0];
     if (oct0 & (0x01 << 6)) {
-        i2s_config.sample_rate = 32000;
+        m_sample_rate = 32000;
     } else if (oct0 & (0x01 << 5)) {
-        i2s_config.sample_rate = 44100;
+        m_sample_rate = 44100;
     } else if (oct0 & (0x01 << 4)) {
-        i2s_config.sample_rate = 48000;
+        m_sample_rate = 48000;
     }
-    ESP_LOGI(BT_AV_TAG, "a2dp audio_cfg_cb , sample_rate %d", i2s_config.sample_rate );
+    ESP_LOGI(BT_AV_TAG, "a2dp audio_cfg_cb , sample_rate %d", m_sample_rate );
     if (sample_rate_callback!=nullptr){
-        sample_rate_callback(i2s_config.sample_rate);
+        sample_rate_callback(m_sample_rate);
     }
 
     // for now only SBC stream is supported
@@ -652,6 +678,8 @@ void BluetoothA2DPSink::handle_audio_cfg(uint16_t event, void *p_param) {
                 a2d->audio_cfg.mcc.cie.sbc[2],
                 a2d->audio_cfg.mcc.cie.sbc[3]);
         
+#if A2DP_I2S_SUPPORT
+        i2s_config.sample_rate = m_sample_rate;
         // setup sample rate and channels
         if (i2s_set_clk(i2s_port, i2s_config.sample_rate, i2s_config.bits_per_sample, i2s_channels)!=ESP_OK){
             ESP_LOGE(BT_AV_TAG, "i2s_set_clk failed with samplerate=%d", i2s_config.sample_rate);
@@ -659,7 +687,18 @@ void BluetoothA2DPSink::handle_audio_cfg(uint16_t event, void *p_param) {
             ESP_LOGI(BT_AV_TAG, "audio player configured, samplerate=%d", i2s_config.sample_rate);
             player_init = true; //init finished
         }
+#else
+        player_init = true; //init finished
+#endif
     }
+}
+
+void BluetoothA2DPSink::handle_avrc_connection_state(bool connected){
+    ESP_LOGD(BT_AV_TAG, "%s state %d", __func__, connected);
+    avrc_connection_state = connected;
+    if (avrc_connection_state_callback!=nullptr){
+        avrc_connection_state_callback(connected);
+    }    
 }
 
 void BluetoothA2DPSink::handle_audio_state(uint16_t event, void *p_param){
@@ -673,6 +712,7 @@ void BluetoothA2DPSink::handle_audio_state(uint16_t event, void *p_param){
         audio_state_callback(a2d->audio_stat.state, audio_state_obj);
     }
 
+#if A2DP_I2S_SUPPORT
     if (is_i2s_output){
         if (ESP_A2D_AUDIO_STATE_STARTED == a2d->audio_stat.state) { 
             m_pkt_cnt = 0; 
@@ -690,10 +730,12 @@ void BluetoothA2DPSink::handle_audio_state(uint16_t event, void *p_param){
             i2s_zero_dma_buffer(i2s_port);
         }
 
-        if (audio_state_callback_post!=nullptr){
-            audio_state_callback_post(a2d->audio_stat.state, audio_state_obj_post);
-        }    
     }
+#endif
+
+    if (audio_state_callback_post!=nullptr){
+        audio_state_callback_post(a2d->audio_stat.state, audio_state_obj_post);
+    }    
 }
 
 
@@ -704,12 +746,6 @@ void BluetoothA2DPSink::handle_connection_state(uint16_t event, void *p_param){
     // determine remote BDA
     memcpy(peer_bd_addr, a2d->conn_stat.remote_bda, ESP_BD_ADDR_LEN);
     ESP_LOGI(BT_AV_TAG, "partner address: %s", to_str(peer_bd_addr));
-
-    // callback
-    connection_state = a2d->conn_stat.state;
-    if (connection_state_callback!=nullptr){
-        connection_state_callback(connection_state, connection_state_obj);
-    }
 
     ESP_LOGI(BT_AV_TAG, "A2DP connection state: %s, [%s]", to_str(a2d->conn_stat.state), to_str(a2d->conn_stat.remote_bda));
     switch (a2d->conn_stat.state) {
@@ -736,10 +772,12 @@ void BluetoothA2DPSink::handle_connection_state(uint16_t event, void *p_param){
                 (*bt_dis_connected)();
             }    
             
+#if A2DP_I2S_SUPPORT
             if (is_i2s_output) {
                 bt_i2s_task_shut_down();
             }
-            
+#endif
+
             // RECONNECTION MGMT
             // do not auto reconnect when disconnect was requested from device
             if (is_autoreconnect_allowed) {
@@ -800,10 +838,11 @@ void BluetoothA2DPSink::handle_connection_state(uint16_t event, void *p_param){
                 set_scan_mode_connectable(false);   
                 connection_rety_count = 0;
                 
+#if A2DP_I2S_SUPPORT
                 if (is_i2s_output) {
                     bt_i2s_task_start_up();
                 }
-
+#endif
                 // record current connection
                 if (reconnect_status==AutoReconnect && is_valid) {
                     set_last_connection(a2d->conn_stat.remote_bda);
@@ -825,10 +864,12 @@ void BluetoothA2DPSink::handle_connection_state(uint16_t event, void *p_param){
             break;
 
     } 
-}
 
-uint16_t BluetoothA2DPSink::sample_rate(){
-    return i2s_config.sample_rate;
+    // callback
+    connection_state = a2d->conn_stat.state;
+    if (connection_state_callback!=nullptr){
+        connection_state_callback(connection_state, connection_state_obj);
+    }
 }
 
 
@@ -836,12 +877,28 @@ void BluetoothA2DPSink::av_new_track()
 {
     ESP_LOGD(BT_AV_TAG, "%s", __func__);
     //Register notifications and request metadata
-    esp_avrc_ct_send_metadata_cmd(0, avrc_metadata_flags);
-    esp_avrc_ct_send_register_notification_cmd(1, ESP_AVRC_RN_TRACK_CHANGE, 0);
+#ifdef ESP_IDF_4
+    esp_avrc_ct_send_metadata_cmd(APP_RC_CT_TL_GET_META_DATA, avrc_metadata_flags);
+    if (esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_TEST, &s_avrc_peer_rn_cap, ESP_AVRC_RN_TRACK_CHANGE)) {
+        esp_avrc_ct_send_register_notification_cmd(APP_RC_CT_TL_RN_TRACK_CHANGE, ESP_AVRC_RN_TRACK_CHANGE, 0);
+    }
+#endif
 }
 
+
+void BluetoothA2DPSink::av_playback_changed()
+{
+    ESP_LOGD(BT_AV_TAG, "%s", __func__);
 #ifdef ESP_IDF_4
-void BluetoothA2DPSink::av_notify_evt_handler(uint8_t& event_id, esp_avrc_rn_param_t& event_parameter)
+    if (esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_TEST, &s_avrc_peer_rn_cap, ESP_AVRC_RN_PLAY_STATUS_CHANGE)) {
+        esp_avrc_ct_send_register_notification_cmd(APP_RC_CT_TL_RN_PLAYBACK_CHANGE, ESP_AVRC_RN_PLAY_STATUS_CHANGE, 0);
+    }
+#endif
+}
+
+
+#ifdef ESP_IDF_4
+void BluetoothA2DPSink::av_notify_evt_handler(uint8_t event_id, esp_avrc_rn_param_t* event_parameter)
 #else
 void BluetoothA2DPSink::av_notify_evt_handler(uint8_t event_id, uint32_t event_parameter)
 #endif
@@ -851,6 +908,16 @@ void BluetoothA2DPSink::av_notify_evt_handler(uint8_t event_id, uint32_t event_p
     case ESP_AVRC_RN_TRACK_CHANGE:
         ESP_LOGD(BT_AV_TAG, "%s ESP_AVRC_RN_TRACK_CHANGE %d", __func__, event_id);
         av_new_track();
+        break;
+    case ESP_AVRC_RN_PLAY_STATUS_CHANGE:
+        ESP_LOGD(BT_AV_TAG, "%s ESP_AVRC_RN_PLAY_STATUS_CHANGE %d, to %d", __func__, event_id, event_parameter->playback);
+        av_playback_changed();
+#ifdef ESP_IDF_4
+        // call avrc play status notification callback if available
+        if (avrc_rn_playstatus_callback != nullptr){
+            avrc_rn_playstatus_callback(event_parameter->playback);
+        }
+#endif
         break;
     default:
         ESP_LOGE(BT_AV_TAG, "%s unhandled evt %d", __func__, event_id);
@@ -865,20 +932,22 @@ void BluetoothA2DPSink::av_hdl_avrc_evt(uint16_t event, void *p_param)
     switch (event) {
     case ESP_AVRC_CT_CONNECTION_STATE_EVT: {
         ESP_LOGI(BT_AV_TAG, "AVRC conn_state evt: state %d, [%s]", rc->conn_stat.connected, to_str(rc->conn_stat.remote_bda));
+        avrc_connection_state = rc->conn_stat.connected;
 
 #ifdef ESP_IDF_4
-        if (rc->conn_stat.connected) {
-            av_new_track();
-             // get remote supported event_ids of peer AVRCP Target
+        if (avrc_connection_state) {
+            // get remote supported event_ids of peer AVRCP Target
             esp_avrc_ct_send_get_rn_capabilities_cmd(APP_RC_CT_TL_GET_CAPS);
         } else {
             // clear peer notification capability record
             s_avrc_peer_rn_cap.bits = 0;
+            handle_avrc_connection_state(avrc_connection_state);
         }        
 #else
-        if (rc->conn_stat.connected) {
+        if (avrc_connection_state) {
             av_new_track();
         }
+        handle_avrc_connection_state(avrc_connection_state);
 #endif
         break;
 
@@ -899,7 +968,11 @@ void BluetoothA2DPSink::av_hdl_avrc_evt(uint16_t event, void *p_param)
     }
     case ESP_AVRC_CT_CHANGE_NOTIFY_EVT: {
         //ESP_LOGI(BT_AV_TAG, "AVRC event notification: %d, param: %d", (int)rc->change_ntf.event_id, (int)rc->change_ntf.event_parameter);
+#ifdef ESP_IDF_4
+        av_notify_evt_handler(rc->change_ntf.event_id, &rc->change_ntf.event_parameter);
+#else
         av_notify_evt_handler(rc->change_ntf.event_id, rc->change_ntf.event_parameter);
+#endif
         break;
     }
     case ESP_AVRC_CT_REMOTE_FEATURES_EVT: {
@@ -914,8 +987,12 @@ void BluetoothA2DPSink::av_hdl_avrc_evt(uint16_t event, void *p_param)
                  rc->get_rn_caps_rsp.evt_set.bits);
         s_avrc_peer_rn_cap.bits = rc->get_rn_caps_rsp.evt_set.bits;
         av_new_track();
-        //bt_av_playback_changed();
-        //bt_av_play_pos_changed();
+        av_playback_changed();
+        //av_play_pos_changed();
+
+        // now we ready to callback
+        handle_avrc_connection_state(avrc_connection_state);
+
         break;
     }
 
@@ -1063,10 +1140,12 @@ void BluetoothA2DPSink::audio_data_callback(const uint8_t *data, uint32_t len) {
         }
     }
 
+#if A2DP_I2S_SUPPORT
     if (is_i2s_output) {
         // put data into ringbuffer
         write_audio(data, len);
     }
+#endif
 
     // data_received callback
     if (data_received!=nullptr){
@@ -1085,7 +1164,9 @@ void BluetoothA2DPSink::init_nvs(){
     ESP_ERROR_CHECK( err );
 }
 
-
+bool BluetoothA2DPSink::is_avrc_connected() {
+    return avrc_connection_state;
+}
 
 void BluetoothA2DPSink::execute_avrc_command(int cmd){
     ESP_LOGD(BT_AV_TAG, "execute_avrc_command: %d",cmd);    
@@ -1096,10 +1177,10 @@ void BluetoothA2DPSink::execute_avrc_command(int cmd){
         if (ok==ESP_OK){
             ESP_LOGD(BT_AV_TAG, "execute_avrc_command: %d -> OK", cmd);    
         } else {
-            ESP_LOGE(BT_AV_TAG,"execute_avrc_command ESP_AVRC_PT_CMD_STATE_PRESSED FAILED: %d",ok);
+            ESP_LOGE(BT_AV_TAG,"execute_avrc_command ESP_AVRC_PT_CMD_STATE_RELEASED FAILED: %d",ok);
         }
     } else {
-        ESP_LOGE(BT_AV_TAG,"execute_avrc_command ESP_AVRC_PT_CMD_STATE_RELEASED FAILED: %d",ok);
+        ESP_LOGE(BT_AV_TAG,"execute_avrc_command ESP_AVRC_PT_CMD_STATE_PRESSED FAILED: %d",ok);
     }
 }
 
@@ -1127,9 +1208,7 @@ void BluetoothA2DPSink::fast_forward(){
 void BluetoothA2DPSink::rewind(){
     execute_avrc_command(ESP_AVRC_PT_CMD_REWIND);
 }
-void BluetoothA2DPSink::getInfo(){
-    execute_avrc_command(ESP_AVRC_PT_CMD_DISP_INFO);
-}
+
 void BluetoothA2DPSink::set_volume(uint8_t volume)
 {
   ESP_LOGI(BT_AV_TAG, "set_volume %d", volume);
@@ -1247,6 +1326,7 @@ void ccall_av_hdl_a2d_evt(uint16_t event, void *param){
     }
 }
 
+#if A2DP_I2S_SUPPORT
 
 size_t BluetoothA2DPSink::i2s_write_data(const uint8_t* data, size_t item_size){
     size_t i2s_bytes_written = 0;
@@ -1286,7 +1366,7 @@ size_t BluetoothA2DPSink::i2s_write_data(const uint8_t* data, size_t item_size){
     }
     return item_size;
 }
-
+#endif
 
 
 //------------------------------------------------------------
@@ -1332,7 +1412,7 @@ void BluetoothA2DPSink::volume_set_by_controller(uint8_t volume)
 
 void BluetoothA2DPSink::volume_set_by_local_host(uint8_t volume)
 {
-    ESP_LOGI(BT_AV_TAG, "Volume is set locally to: %d", (uint32_t)volume * 100 / 0x7f);
+    ESP_LOGI(BT_AV_TAG, "Volume is set locally to: %d%%", (uint32_t)volume * 100 / 0x7f);
 
     _lock_acquire(&s_volume_lock);
     s_volume = volume;
@@ -1376,7 +1456,7 @@ void BluetoothA2DPSink::av_hdl_avrc_tg_evt(uint16_t event, void *p_param)
     }
 
     case ESP_AVRC_TG_SET_ABSOLUTE_VOLUME_CMD_EVT: {
-        ESP_LOGI(BT_AV_TAG, "AVRC set absolute volume: %d%%", (int)rc->set_abs_vol.volume * 100/ 0x7f);    
+        ESP_LOGI(BT_AV_TAG, "AVRC remote set absolute volume: %d%%", (int)rc->set_abs_vol.volume * 100/ 0x7f);    
         volume_set_by_controller(rc->set_abs_vol.volume);
         break;
     }
@@ -1384,13 +1464,14 @@ void BluetoothA2DPSink::av_hdl_avrc_tg_evt(uint16_t event, void *p_param)
     case ESP_AVRC_TG_REGISTER_NOTIFICATION_EVT: {
         ESP_LOGI(BT_AV_TAG, "AVRC register event notification: %d, param: 0x%x", rc->reg_ntf.event_id, rc->reg_ntf.event_parameter);
         if (rc->reg_ntf.event_id == ESP_AVRC_RN_VOLUME_CHANGE) {
-            ESP_LOGI(BT_AV_TAG, "AVRC Volume Changes Supported");
             s_volume_notify = true;
             esp_avrc_rn_param_t rn_param;
             rn_param.volume = s_volume;
-            esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE, ESP_AVRC_RN_RSP_INTERIM, &rn_param);            
-        } else {
-            ESP_LOGW(BT_AV_TAG, "AVRC Volume Changes NOT Supported");
+            esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE, ESP_AVRC_RN_RSP_INTERIM, &rn_param);     
+            // notify user aplication volume change by local is completed
+            if (avrc_rn_volchg_complete_callback!=nullptr){
+                (*avrc_rn_volchg_complete_callback)(s_volume);
+            } 
         }
         break;
     }

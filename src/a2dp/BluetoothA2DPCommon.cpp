@@ -31,16 +31,19 @@ void BluetoothA2DPCommon::set_auto_reconnect(bool active){
 
 /// Reconnects to the last device
 bool BluetoothA2DPCommon::reconnect() {
-    is_autoreconnect_allowed = true;
-    reconnect_status = IsReconnecting;
-    reconnect_timout = millis() + default_reconnect_timout;
-    return connect_to(peer_bd_addr);
+    if (has_last_connection()) {
+        is_autoreconnect_allowed = true;
+        reconnect_status = IsReconnecting;
+        reconnect_timout = millis() + default_reconnect_timout;
+        return connect_to(last_connection);
+    }
+
+    return false;
 }
 
 bool BluetoothA2DPCommon::connect_to(esp_bd_addr_t peer){
     ESP_LOGW(BT_AV_TAG, "connect_to to %s", to_str(last_connection));
-    set_scan_mode_connectable(true);
-    delay(100);
+    set_scan_mode_connectable_default();
     esp_err_t err = esp_a2d_connect(peer);
     if (err!=ESP_OK){
         ESP_LOGE(BT_AV_TAG, "esp_a2d_source_connect:%d", err);
@@ -260,10 +263,17 @@ const char* BluetoothA2DPCommon::to_str(esp_bd_addr_t bda){
     return (const char*)bda_str;
 }
 
-
-
-
 #ifdef ESP_IDF_4
+
+/// converts a esp_a2d_audio_state_t to a string
+const char* BluetoothA2DPCommon::to_str(esp_avrc_playback_stat_t state){
+    if (state == esp_avrc_playback_stat_t::ESP_AVRC_PLAYBACK_ERROR)
+        return "error";
+    else {
+        return m_avrc_playback_state_str[state];
+    }
+}
+
 
 /// Defines if the bluetooth is discoverable
 void BluetoothA2DPCommon::set_discoverability(esp_bt_discovery_mode_t d) {
@@ -273,6 +283,8 @@ void BluetoothA2DPCommon::set_discoverability(esp_bt_discovery_mode_t d) {
   }
 }
 
+
+/// Defines if the bluetooth is connectable
 void BluetoothA2DPCommon::set_scan_mode_connectable(bool connectable) {
     ESP_LOGI(BT_AV_TAG,"set_scan_mode_connectable %s", connectable ? "true":"false" );            
     if (connectable){

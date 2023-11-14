@@ -24,7 +24,7 @@
 typedef void (* bt_app_cb_t) (uint16_t event, void *param);
 typedef  int32_t (* music_data_cb_t) (uint8_t *data, int32_t len);
 typedef  int32_t (* music_data_channels_cb_t) (Frame *data, int32_t len);
-typedef void (* bt_app_copy_cb_t) (app_msg_t *msg, void *p_dest, void *p_src);
+typedef void (* bt_app_copy_cb_t) (bt_app_msg_t *msg, void *p_dest, void *p_src);
 
 extern "C" void ccall_bt_av_hdl_stack_evt(uint16_t event, void *p_param);
 extern "C" void ccall_bt_app_task_handler(void *arg);
@@ -37,6 +37,27 @@ extern "C" void ccall_bt_av_hdl_avrc_ct_evt(uint16_t event, void *param) ;
 extern "C" int32_t ccall_bt_app_a2d_data_cb(uint8_t *data, int32_t len);
 extern "C" int32_t ccall_get_channel_data_wrapper(uint8_t *data, int32_t len) ;
 extern "C" int32_t ccall_get_data_default(uint8_t *data, int32_t len) ;
+
+/* A2DP global state */
+enum APP_AV_STATE {
+  APP_AV_STATE_IDLE,
+  APP_AV_STATE_DISCOVERING,
+  APP_AV_STATE_DISCOVERED,
+  APP_AV_STATE_UNCONNECTED,
+  APP_AV_STATE_CONNECTING,
+  APP_AV_STATE_CONNECTED,
+  APP_AV_STATE_DISCONNECTING,
+};
+
+static const char* APP_AV_STATE_STR[]={
+  "APP_AV_STATE_IDLE",
+  "APP_AV_STATE_DISCOVERING",
+  "APP_AV_STATE_DISCOVERED",
+  "APP_AV_STATE_UNCONNECTED",
+  "APP_AV_STATE_CONNECTING",
+  "APP_AV_STATE_CONNECTED",
+  "APP_AV_STATE_DISCONNECTING"
+};
 
 
 /**
@@ -85,7 +106,7 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
 
     /// Defines the local name
     virtual void set_local_name(const char* name){
-      bt_name = name;
+      dev_name = name;
     }
 
     /**
@@ -161,13 +182,12 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
       ssid_callback = callback;
     }
 
-
   protected:
     music_data_channels_cb_t data_stream_channels_callback;
     const char *dev_name = "ESP32_A2DP_SRC";
 
     bool ssp_enabled=false;
-    const char* bt_name = {0};
+    bool is_connecting = false;
     std::vector<const char*> bt_names;
 
     esp_bt_pin_type_t pin_type;
@@ -175,7 +195,7 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
     uint32_t pin_code_len;
 
     uint8_t s_peer_bdname[ESP_BT_GAP_MAX_BDNAME_LEN + 1];
-    int s_a2d_state=0; // Next Target Connection State
+    APP_AV_STATE s_a2d_state = APP_AV_STATE_IDLE; // Next Target Connection State
     int s_media_state=0;
     int s_intv_cnt=0;
     int s_connecting_heatbeat_count;
@@ -207,14 +227,14 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
     virtual void bt_app_av_media_proc(uint16_t event, void *param);
 
     /* A2DP application state machine handler for each state */
-    virtual void bt_app_av_state_unconnected(uint16_t event, void *param);
-    virtual void bt_app_av_state_connecting(uint16_t event, void *param);
-    virtual void bt_app_av_state_connected(uint16_t event, void *param);
-    virtual void bt_app_av_state_disconnecting(uint16_t event, void *param);
+    virtual void bt_app_av_state_unconnected_hdlr(uint16_t event, void *param);
+    virtual void bt_app_av_state_connecting_hdlr(uint16_t event, void *param);
+    virtual void bt_app_av_state_connected_hdlr(uint16_t event, void *param);
+    virtual void bt_app_av_state_disconnecting_hdlr(uint16_t event, void *param);
 
 
-    virtual bool bt_app_send_msg(app_msg_t *msg);
-    virtual void bt_app_work_dispatched(app_msg_t *msg);
+    virtual bool bt_app_send_msg(bt_app_msg_t *msg);
+    virtual void bt_app_work_dispatched(bt_app_msg_t *msg);
 
     virtual bool get_name_from_eir(uint8_t *eir, uint8_t *bdname, uint8_t *bdname_len);
     virtual void filter_inquiry_scan_result(esp_bt_gap_cb_param_t *param);
@@ -244,7 +264,17 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
     virtual void reset_last_connection();
 
     virtual esp_err_t esp_a2d_connect(esp_bd_addr_t peer) {
+        ESP_LOGI(BT_AV_TAG, "a2dp connecting to: %s", to_str(peer));
         return esp_a2d_source_connect(peer);
+    }
+
+    /// converts a APP_AV_STATE_ENUM to a string
+    const char* to_state_str(int state) {
+      return APP_AV_STATE_STR[state];
+    }
+
+    void set_scan_mode_connectable_default() override {
+        set_scan_mode_connectable(false);
     }
 
 #ifdef ESP_IDF_4

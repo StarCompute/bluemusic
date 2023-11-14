@@ -11,6 +11,7 @@
 #  endif
 #endif
 
+
 #if __has_include("esp_idf_version.h")
 #include "esp_idf_version.h"
 #  if ESP_IDF_VERSION_MAJOR >= 4
@@ -33,4 +34,9 @@ using namespace esp_i2s;
 // Compile only for ESP32
 #if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
 #error "ESP32C3, ESP32S2, ESP32S3 do not support A2DP"
+#endif
+
+// Activate I2S Support (legacy i2s)
+#ifndef A2DP_I2S_SUPPORT
+#  define A2DP_I2S_SUPPORT true
 #endif

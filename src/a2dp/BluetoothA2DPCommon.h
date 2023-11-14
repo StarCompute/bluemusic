@@ -43,7 +43,6 @@
 #include "esp_bt_device.h"
 #include "esp_gap_bt_api.h"
 #include "esp_a2dp_api.h"
-#include "driver/i2s.h"
 #include "esp_avrc_api.h"
 #include "esp_spp_api.h"
 #include "nvs.h"
@@ -51,6 +50,10 @@
 #include "SoundData.h"
 #include "A2DPVolumeControl.h"
 #include "esp_task_wdt.h"
+
+#if A2DP_I2S_SUPPORT
+#  include "driver/i2s.h"
+#endif
 
 #ifdef ARDUINO_ARCH_ESP32
 #include "esp32-hal-log.h"
@@ -74,6 +77,14 @@ extern "C" unsigned long millis();
 
 #endif
 
+// IDF 5 support
+#if ESP_IDF_VERSION_MAJOR >= 5
+#  define xTaskHandle TaskHandle_t
+#  define xQueueHandle QueueHandle_t
+#endif
+
+
+
 /**
  * @brief     handler for the dispatched work
  */
@@ -85,13 +96,20 @@ typedef struct {
     uint16_t             event;    /*!< message event id */
     app_callback_t       cb;       /*!< context switch callback */
     void                 *param;   /*!< parameter area needs to be last */
-} app_msg_t;
+} bt_app_msg_t;
 
 
 #define BT_AV_TAG        "BT_AV"
 #define BT_RC_CT_TAG     "RCCT"
 #define BT_APP_TAG       "BT_API"
-#define APP_RC_CT_TL_GET_CAPS   (0)
+
+/* AVRCP used transaction labels */
+#define APP_RC_CT_TL_GET_CAPS            (0)
+#define APP_RC_CT_TL_GET_META_DATA       (1)
+#define APP_RC_CT_TL_RN_TRACK_CHANGE     (2)
+#define APP_RC_CT_TL_RN_PLAYBACK_CHANGE  (3)
+#define APP_RC_CT_TL_RN_PLAY_POS_CHANGE  (4)
+
 
 enum ReconnectStatus { NoReconnect, AutoReconnect, IsReconnecting};
 
@@ -108,13 +126,16 @@ class BluetoothA2DPCommon {
     
         /// activate / deactivate the automatic reconnection to the last address (per default this is on)
         void set_auto_reconnect(bool active);
+
         /// Closes the connection
         virtual void disconnect();
 
         /// Reconnects to the last device
         virtual bool reconnect();
 
+        /// Connnects to the indicated address
         virtual bool connect_to(esp_bd_addr_t peer);
+
         /// Calls disconnect or reconnect
         virtual void set_connected(bool active);
 
@@ -175,6 +196,11 @@ class BluetoothA2DPCommon {
         /// converts a esp_bd_addr_t to a string - the string is 18 characters long! 
         const char* to_str(esp_bd_addr_t bda);
 
+#ifdef ESP_IDF_4
+        /// converts esp_avrc_playback_stat_t to a string
+        const char* to_str(esp_avrc_playback_stat_t state);
+#endif
+
         /// defines the task priority (the default value is configMAX_PRIORITIES - 10)
         void set_task_priority(UBaseType_t priority){
             task_priority = priority;
@@ -204,11 +230,25 @@ class BluetoothA2DPCommon {
 #ifdef ESP_IDF_4
     /// Bluetooth discoverability
     virtual void set_discoverability(esp_bt_discovery_mode_t d);
-#endif        
+#endif
+
+    /// Bluetooth connectable
+    virtual void set_connectable(bool connectable) {
+        set_scan_mode_connectable(connectable);
+    }
+
+    /// Provides the actual SSID name
+    virtual const char* get_name() {
+        return bt_name;
+    }
+
+    /// clean last connection (delete)
+    virtual void clean_last_connection();
 
     protected:
+        const char* bt_name = {0};
         esp_bd_addr_t peer_bd_addr;
-        ReconnectStatus reconnect_status = AutoReconnect;
+        ReconnectStatus reconnect_status = NoReconnect;
         unsigned long reconnect_timout=0;
         unsigned int default_reconnect_timout=10000;
         bool is_autoreconnect_allowed = false; 
@@ -225,6 +265,7 @@ class BluetoothA2DPCommon {
         void *audio_state_obj_post = nullptr;
         const char *m_a2d_conn_state_str[4] = {"Disconnected", "Connecting", "Connected", "Disconnecting"};
         const char *m_a2d_audio_state_str[3] = {"Suspended", "Stopped", "Started"};
+        const char *m_avrc_playback_state_str[5] = {"stopped", "playing", "paused", "forward seek", "reverse seek"};
         esp_a2d_audio_state_t audio_state = ESP_A2D_AUDIO_STATE_STOPPED;
         esp_a2d_connection_state_t connection_state = ESP_A2D_CONNECTION_STATE_DISCONNECTED;
         UBaseType_t task_priority = configMAX_PRIORITIES - 10;
@@ -245,10 +286,10 @@ class BluetoothA2DPCommon {
         virtual const char* last_bda_nvs_name() = 0;
         virtual void get_last_connection();
         virtual void set_last_connection(esp_bd_addr_t bda);
-        virtual void clean_last_connection();
         virtual bool has_last_connection();
         // change the scan mode
         virtual void set_scan_mode_connectable(bool connectable);
+        virtual void set_scan_mode_connectable_default();
 
         /// provides access to the VolumeControl object
         virtual A2DPVolumeControl* volume_control() {
