@@ -59,7 +59,7 @@ extern "C" void ccall_bt_app_rc_ct_cb(esp_avrc_ct_cb_event_t event,
     self_BluetoothA2DPSource->bt_app_rc_ct_cb(event, param);
 }
 
-extern "C" void ccall_a2d_app_heart_beat(void *arg) {
+extern "C" void ccall_a2d_app_heart_beat(TIMER_ARG_TYPE arg) {
   if (self_BluetoothA2DPSource)
     self_BluetoothA2DPSource->a2d_app_heart_beat(arg);
 }
@@ -134,10 +134,6 @@ BluetoothA2DPSource::BluetoothA2DPSource() {
 
 BluetoothA2DPSource::~BluetoothA2DPSource() { end(); }
 
-bool BluetoothA2DPSource::is_connected() {
-  return s_a2d_state == APP_AV_STATE_CONNECTED;
-}
-
 void BluetoothA2DPSource::set_pin_code(const char *pin_code,
                                        esp_bt_pin_type_t pin_type) {
   ESP_LOGD(BT_APP_TAG, "%s, ", __func__);
@@ -201,21 +197,21 @@ void BluetoothA2DPSource::start_raw(std::vector<const char *> names,
 
   if (reset_ble) {
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
+  }
 
-    if (!btStart()) {
-      ESP_LOGE(BT_AV_TAG, "Failed to initialize controller");
-      return;
-    }
+  if (!bt_start()) {
+    ESP_LOGE(BT_AV_TAG, "Failed to initialize controller");
+    return;
+  }
 
-    if (esp_bluedroid_init() != ESP_OK) {
-      ESP_LOGE(BT_AV_TAG, "%s initialize bluedroid failed\n", __func__);
-      return;
-    }
+  if (bluedroid_init() != ESP_OK) {
+    ESP_LOGE(BT_AV_TAG, "%s initialize bluedroid failed\n", __func__);
+    return;
+  }
 
-    if (esp_bluedroid_enable() != ESP_OK) {
-      ESP_LOGE(BT_AV_TAG, "%s enable bluedroid failed\n", __func__);
-      return;
-    }
+  if (esp_bluedroid_enable() != ESP_OK) {
+    ESP_LOGE(BT_AV_TAG, "%s enable bluedroid failed\n", __func__);
+    return;
   }
 
   if (ssp_enabled) {
@@ -246,7 +242,7 @@ void BluetoothA2DPSource::reset_last_connection() {
   if (has_last_connection()) {
     // the device might not have noticed that we are diconnected
     disconnect();
-    delay(2000);
+    delay_ms(2000);
     // remove bonding - so that we can reconnect
     //ESP_LOGD(BT_APP_TAG, "resetting %s, ", bda_str);
     //esp_bt_gap_remove_bond_device(last_connection);
@@ -569,7 +565,7 @@ void BluetoothA2DPSource::bt_av_hdl_stack_evt(uint16_t event, void *p_param) {
     esp_avrc_ct_init();
     esp_avrc_ct_register_callback(ccall_bt_app_rc_ct_cb);
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
     esp_avrc_rn_evt_cap_mask_t evt_set = {0};
     esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
                                        ESP_AVRC_RN_VOLUME_CHANGE);
@@ -685,7 +681,7 @@ void BluetoothA2DPSource::bt_app_av_sm_hdlr(uint16_t event, void *param) {
 void BluetoothA2DPSource::bt_app_av_state_unconnected_hdlr(uint16_t event,
                                                            void *param) {
   ESP_LOGD(BT_AV_TAG, "%s evt %d", __func__, event);
-  esp_a2d_cb_param_t *a2d = NULL;
+  //esp_a2d_cb_param_t *a2d = NULL;
   /* handle the events of intrest in unconnected state */
   switch (event) {
   case ESP_A2D_CONNECTION_STATE_EVT:
@@ -897,7 +893,7 @@ void BluetoothA2DPSource::bt_app_rc_ct_cb(esp_avrc_ct_cb_event_t event,
   case ESP_AVRC_CT_METADATA_RSP_EVT:
   case ESP_AVRC_CT_CHANGE_NOTIFY_EVT:
   case ESP_AVRC_CT_REMOTE_FEATURES_EVT:
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
   case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT:
   case ESP_AVRC_CT_SET_ABSOLUTE_VOLUME_RSP_EVT: 
 #endif
@@ -913,7 +909,7 @@ void BluetoothA2DPSource::bt_app_rc_ct_cb(esp_avrc_ct_cb_event_t event,
   }
 }
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
 
 void BluetoothA2DPSource::bt_av_volume_changed(void) {
   if (esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_TEST,
@@ -930,10 +926,12 @@ void BluetoothA2DPSource::bt_av_notify_evt_handler(
   switch (event_id) {
   case ESP_AVRC_RN_VOLUME_CHANGE:
     ESP_LOGI(BT_RC_CT_TAG, "Volume changed: %d", event_parameter->volume);
-    ESP_LOGI(BT_RC_CT_TAG, "Set absolute volume: volume %d",
-             event_parameter->volume + 5);
+    // limit the value to 127
+    uint8_t new_volume = std::min((int)event_parameter->volume, 0x7f);
+    ESP_LOGI(BT_RC_CT_TAG, "Set absolute volume: volume %d", new_volume);
     esp_avrc_ct_send_set_absolute_volume_cmd(APP_RC_CT_TL_RN_VOLUME_CHANGE,
-                                             event_parameter->volume + 5);
+                                             new_volume);
+    set_volume(new_volume);
     bt_av_volume_changed();
     break;
   }
@@ -948,13 +946,13 @@ void BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(uint16_t event, void *p_param) {
   switch (event) {
   /* when connection state changed, this event comes */
   case ESP_AVRC_CT_CONNECTION_STATE_EVT: {
-    uint8_t *bda = rc->conn_stat.remote_bda;
+    [[maybe_unused]] uint8_t *bda = rc->conn_stat.remote_bda;
     ESP_LOGI(BT_RC_CT_TAG,
              "AVRC conn_state event: state %d, [%02x:%02x:%02x:%02x:%02x:%02x]",
              rc->conn_stat.connected, bda[0], bda[1], bda[2], bda[3], bda[4],
              bda[5]);
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
     if (rc->conn_stat.connected) {
       esp_avrc_ct_send_get_rn_capabilities_cmd(APP_RC_CT_TL_GET_CAPS);
     } else {
@@ -982,7 +980,7 @@ void BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(uint16_t event, void *p_param) {
   case ESP_AVRC_CT_CHANGE_NOTIFY_EVT: {
     ESP_LOGI(BT_RC_CT_TAG, "AVRC event notification: %d",
              rc->change_ntf.event_id);
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
     bt_av_notify_evt_handler(rc->change_ntf.event_id,
                              &rc->change_ntf.event_parameter);
 #endif
@@ -995,7 +993,7 @@ void BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(uint16_t event, void *p_param) {
     break;
   }
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
   /* when get supported notification events capability of peer device, this
    * event comes */
   case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT: {
@@ -1010,6 +1008,7 @@ void BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(uint16_t event, void *p_param) {
   case ESP_AVRC_CT_SET_ABSOLUTE_VOLUME_RSP_EVT: {
     ESP_LOGI(BT_RC_CT_TAG, "Set absolute volume response: volume %d",
              rc->set_volume_rsp.volume);
+    set_volume(rc->set_volume_rsp.volume);
     break;
   }
 #endif

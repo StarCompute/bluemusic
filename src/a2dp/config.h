@@ -1,42 +1,31 @@
 #pragma once
 
-#define A2DP_DEPRECATED __attribute__((deprecated))
-
-// Enable ESP_IDF_4 if we are using a current version of ESP IDF e.g. 4.3
-// ESP Arduino 2.0 is using ESP IDF 4.4
-#if __has_include("esp_arduino_version.h")
-#include "esp_arduino_version.h"
-#  if ESP_ARDUINO_VERSION_MAJOR >= 2
-#    define ESP_IDF_4
-#  endif
-#endif
-
-
-#if __has_include("esp_idf_version.h")
-#include "esp_idf_version.h"
-#  if ESP_IDF_VERSION_MAJOR >= 4
-#    ifndef ESP_IDF_4
-#      define ESP_IDF_4
-#    endif
-#  endif
-#endif
-
 #ifndef AUTOCONNECT_TRY_NUM
 #  define AUTOCONNECT_TRY_NUM 1000
 #endif
 
-// If you use #include "I2S.h" the i2s functionality is hidden in a namespace
-// this hack prevents any error messages
-#ifdef _I2S_H_INCLUDED
-using namespace esp_i2s;
-#endif
-
-// Compile only for ESP32
-#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
-#error "ESP32C3, ESP32S2, ESP32S3 do not support A2DP"
-#endif
-
 // Activate I2S Support (legacy i2s)
-#ifndef A2DP_I2S_SUPPORT
-#  define A2DP_I2S_SUPPORT true
+#ifndef A2DP_LEGACY_I2S_SUPPORT
+#  define A2DP_LEGACY_I2S_SUPPORT (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0))
+#endif
+
+// Use https://pschatzmann.github.io/arduino-audio-tools for output
+#ifndef A2DP_I2S_AUDIOTOOLS
+#  if __has_include("AudioTools.h")
+#    define A2DP_I2S_AUDIOTOOLS 1
+#  endif
+#endif
+
+#ifndef A2DP_SPP_SUPPORT
+#  define A2DP_SPP_SUPPORT (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0))
+#endif
+
+// Maximum write size
+#ifndef A2DP_I2S_MAX_WRITE_SIZE 
+#  define A2DP_I2S_MAX_WRITE_SIZE 1024 * 5
+#endif
+
+// Maximum wait time for status change in 100 ms when calling end()
+#ifndef A2DP_DISCONNECT_LIMIT 
+#  define A2DP_DISCONNECT_LIMIT 20
 #endif

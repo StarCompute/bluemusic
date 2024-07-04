@@ -21,6 +21,12 @@
 #include <vector> 
 #include "BluetoothA2DPCommon.h"
 
+#if (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0))
+# define TIMER_ARG_TYPE void*
+#else
+# define TIMER_ARG_TYPE tmrTimerControl*
+#endif
+
 typedef void (* bt_app_cb_t) (uint16_t event, void *param);
 typedef  int32_t (* music_data_cb_t) (uint8_t *data, int32_t len);
 typedef  int32_t (* music_data_channels_cb_t) (Frame *data, int32_t len);
@@ -30,7 +36,7 @@ extern "C" void ccall_bt_av_hdl_stack_evt(uint16_t event, void *p_param);
 extern "C" void ccall_bt_app_task_handler(void *arg);
 extern "C" void ccall_bt_app_gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
 extern "C" void ccall_bt_app_rc_ct_cb(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param);
-extern "C" void ccall_a2d_app_heart_beat(void *arg) ;
+extern "C" void ccall_a2d_app_heart_beat(TIMER_ARG_TYPE arg) ;
 extern "C" void ccall_bt_app_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
 extern "C" void ccall_bt_app_av_sm_hdlr(uint16_t event, void *param);
 extern "C" void ccall_bt_av_hdl_avrc_ct_evt(uint16_t event, void *param) ;
@@ -72,7 +78,7 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
   friend void ccall_bt_app_task_handler(void *arg);
   friend void ccall_bt_app_gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
   friend void ccall_bt_app_rc_ct_cb(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param);
-  friend void ccall_a2d_app_heart_beat(void *arg) ;
+  friend void ccall_a2d_app_heart_beat(TIMER_ARG_TYPE arg) ;
   friend void ccall_bt_app_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
   friend void ccall_bt_app_av_sm_hdlr(uint16_t event, void *param);
   friend void ccall_bt_av_hdl_avrc_ct_evt(uint16_t event, void *param) ;
@@ -156,9 +162,6 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
      */
     virtual bool write_data(SoundData *data);
 
-    /// Returns true if the bluetooth device is connected
-    virtual  bool is_connected();
-
     /**
      *   @brief Returns true if write_dataRaw has been called with any valid data
      */
@@ -196,6 +199,7 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
 
     uint8_t s_peer_bdname[ESP_BT_GAP_MAX_BDNAME_LEN + 1];
     APP_AV_STATE s_a2d_state = APP_AV_STATE_IDLE; // Next Target Connection State
+    APP_AV_STATE s_a2d_last_state = APP_AV_STATE_IDLE; // Next Target Connection State
     int s_media_state=0;
     int s_intv_cnt=0;
     int s_connecting_heatbeat_count;
@@ -210,12 +214,12 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
 
     // initialization
     bool nvs_init = true;
-    bool reset_ble = true;
+    bool reset_ble = false;
     music_data_cb_t data_stream_callback;
 
     bool(*ssid_callback)(const char*ssid, esp_bd_addr_t address, int rrsi) = nullptr;
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
     esp_avrc_rn_evt_cap_mask_t s_avrc_peer_rn_cap;
 #endif
 
@@ -277,7 +281,7 @@ class BluetoothA2DPSource : public BluetoothA2DPCommon {
         set_scan_mode_connectable(false);
     }
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
     void bt_av_notify_evt_handler(uint8_t event, esp_avrc_rn_param_t *param);
     void bt_av_volume_changed(void);
 #endif

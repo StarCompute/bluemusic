@@ -34,7 +34,7 @@ bool BluetoothA2DPCommon::reconnect() {
     if (has_last_connection()) {
         is_autoreconnect_allowed = true;
         reconnect_status = IsReconnecting;
-        reconnect_timout = millis() + default_reconnect_timout;
+        reconnect_timout = get_millis() + default_reconnect_timout;
         return connect_to(last_connection);
     }
 
@@ -42,7 +42,7 @@ bool BluetoothA2DPCommon::reconnect() {
 }
 
 bool BluetoothA2DPCommon::connect_to(esp_bd_addr_t peer){
-    ESP_LOGW(BT_AV_TAG, "connect_to to %s", to_str(last_connection));
+    ESP_LOGW(BT_AV_TAG, "connect_to to %s", to_str(peer));
     set_scan_mode_connectable_default();
     esp_err_t err = esp_a2d_connect(peer);
     if (err!=ESP_OK){
@@ -82,10 +82,15 @@ void BluetoothA2DPCommon::end(bool release_memory) {
     clean_last_connection();
     log_free_heap();
 
-    // Disconnect
+    // Disconnect and wait
     disconnect();
-    while(is_connected()){
-        delay(100);
+    int limit = A2DP_DISCONNECT_LIMIT;
+    while(get_connection_state() != ESP_A2D_CONNECTION_STATE_DISCONNECTED){
+        delay_ms(100);
+        if (limit-- < 0) {
+            ESP_LOGW(BT_AV_TAG,"Waiting for Disconnect has timed out");
+            break;
+        };
     }
 
     // deinit AVRC
@@ -118,8 +123,14 @@ void BluetoothA2DPCommon::end(bool release_memory) {
         log_free_heap();
 
         // waiting for status change
-        while(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED)
-            delay(50);
+        limit = A2DP_DISCONNECT_LIMIT;
+        while(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED){
+            delay_ms(100);
+            if (limit-- < 0) {
+                ESP_LOGW(BT_AV_TAG,"Waiting for Enabled has timed out");
+                break;
+            };
+        }
 
         if(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED){
             ESP_LOGI(BT_AV_TAG,"esp_bt_controller_deinit");
@@ -234,10 +245,10 @@ void BluetoothA2DPCommon::set_on_audio_state_changed_post(void (*callBack)(esp_a
 
 /// Prevents that the same method is executed multiple times within the indicated time limit
 void BluetoothA2DPCommon::debounce(void(*cb)(void),int ms){
-    if (debounce_ms < millis()){
+    if (debounce_ms < get_millis()){
         cb();
         // new time limit
-        debounce_ms = millis()+ms;
+        debounce_ms = get_millis()+ms;
     }
 }
 
@@ -263,7 +274,65 @@ const char* BluetoothA2DPCommon::to_str(esp_bd_addr_t bda){
     return (const char*)bda_str;
 }
 
-#ifdef ESP_IDF_4
+
+/**
+ * @brief Startup logic as implemented by Arduino 
+ * 
+ * @return true 
+ * @return false 
+ */
+bool BluetoothA2DPCommon::bt_start(){
+#ifdef ARDUINO
+  return btStart();
+#else
+  esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+  // esp_bt_controller_enable(MODE) This mode must be equal as the mode in “cfg” of esp_bt_controller_init().
+  cfg.mode = bt_mode;
+  if (cfg.mode == ESP_BT_MODE_CLASSIC_BT) {
+    ESP_LOGI(BT_APP_TAG, "mode is ESP_BT_MODE_CLASSIC_BT");
+    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+  }
+
+  if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+    return true;
+  }
+  esp_err_t ret;
+  if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {
+    if ((ret = esp_bt_controller_init(&cfg)) != ESP_OK) {
+      ESP_LOGE(BT_APP_TAG, "esp_bt_controller_init failed: %d", ret);
+      return false;
+    }
+    while (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {
+        delay_ms(100);
+    }
+  }
+  if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED) {
+    if ((ret = esp_bt_controller_enable(bt_mode)) != ESP_OK) {
+      ESP_LOGE(BT_APP_TAG, "BT Enable failed: %d", ret);
+      return false;
+    }
+  }
+  if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+    ESP_LOGI(BT_APP_TAG, "BT enabled");
+    return true;
+  }
+  ESP_LOGE(BT_APP_TAG, "BT Start failed");
+  return false;
+#endif
+}
+
+
+esp_err_t BluetoothA2DPCommon::bluedroid_init(){
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 2 , 1)
+    return esp_bluedroid_init_with_cfg(&bluedroid_config);
+#else
+    return esp_bluedroid_init();
+#endif
+}
+
+
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
 
 /// converts a esp_a2d_audio_state_t to a string
 const char* BluetoothA2DPCommon::to_str(esp_avrc_playback_stat_t state){
@@ -314,53 +383,23 @@ void BluetoothA2DPCommon::set_scan_mode_connectable(bool connectable) {
 
 #endif
 
-
-#ifndef ARDUINO_ARCH_ESP32
-
-#include "BluetoothA2DPCommon.h"
-
-/**
- * @brief Startup logic as implemented by Arduino - This is not available if we use this library outside of Arduino
- * 
- * @return true 
- * @return false 
- */
-bool btStart(){
-    esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    if(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED){
-        return true;
-    }
-    if(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE){
-        esp_bt_controller_init(&cfg);
-        while(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE){}
-    }
-    if(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED){
-        if (esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) {
-            ESP_LOGE(BT_APP_TAG, "BT Enable failed");
-            return false;
-        }
-    }
-    if(esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED){
-        return true;
-    }
-    ESP_LOGE(BT_APP_TAG, "BT Start failed");
-    return false;
-}
-
-/**
- * @brief call vTaskDelay to deley for the indicated number of milliseconds
- * 
- */
-void delay(long millis) {
+void BluetoothA2DPCommon::delay_ms(uint32_t millis) {
+#ifdef ARDUINO
+    delay(millis);
+#else
     const TickType_t xDelay = millis / portTICK_PERIOD_MS; 
     vTaskDelay(xDelay);
+#endif
 }
 
-unsigned long millis() {
+unsigned long BluetoothA2DPCommon::get_millis() {
+#ifdef ARDUINO
+    return millis();
+#else
     return (unsigned long) (esp_timer_get_time() / 1000ULL);
+#endif
 }
 
-#endif 
 
 
 

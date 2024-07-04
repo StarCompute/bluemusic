@@ -20,11 +20,19 @@
  * @copyright GPLv3
  */
 
-
-
 #pragma once
-
 #include "config.h"
+// If you use #include "I2S.h" the i2s functionality is hidden in a namespace
+// this hack prevents any error messages
+#ifdef _I2S_H_INCLUDED
+using namespace esp_i2s;
+#endif
+// Compile only for ESP32
+#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C6)
+#  error "ESP32C3, ESP32S2, ESP32S3 do not support A2DP"
+#endif
+
+#include "esp_idf_version.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,10 +42,14 @@
 #include <math.h>    
 #include "freertos/FreeRTOS.h" // needed for ESP Arduino < 2.0    
 #include "freertos/timers.h"
-#include "freertos/xtensa_api.h"
 #include "freertos/FreeRTOSConfig.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 2 , 0)
+#  include "freertos/xtensa_api.h"
+#else
+#  include "xtensa_api.h"
+#endif
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_bt_device.h"
@@ -50,10 +62,7 @@
 #include "SoundData.h"
 #include "A2DPVolumeControl.h"
 #include "esp_task_wdt.h"
-
-#if A2DP_I2S_SUPPORT
-#  include "driver/i2s.h"
-#endif
+#include "esp_timer.h"
 
 #ifdef ARDUINO_ARCH_ESP32
 #include "esp32-hal-log.h"
@@ -61,29 +70,33 @@
 #else
 #include "esp_log.h"
 
-extern "C" bool btStart();
-extern "C" void delay(long millis);
-extern "C" unsigned long millis();
+#endif
 
+#if !defined(ESP_IDF_VERSION)
+#  error Unsupported ESP32 Version: Upgrade the ESP32 version in the Board Manager
 #endif
 
 // Support for old and new IDF version
-#if !defined(ESP_IDF_4) && !defined(I2S_COMM_FORMAT_STAND_I2S)
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 0 , 0) && !defined(I2S_COMM_FORMAT_STAND_I2S)
 // support for old idf releases
 # define I2S_COMM_FORMAT_STAND_I2S (I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB)
 # define I2S_COMM_FORMAT_STAND_MSB (I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_LSB)
 # define I2S_COMM_FORMAT_STAND_PCM_LONG (I2S_COMM_FORMAT_PCM | I2S_COMM_FORMAT_PCM_LONG)
 # define I2S_COMM_FORMAT_STAND_PCM_SHORT (I2S_COMM_FORMAT_PCM | I2S_COMM_FORMAT_PCM_SHORT)
-
 #endif
 
 // IDF 5 support
-#if ESP_IDF_VERSION_MAJOR >= 5
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0 , 0)
 #  define xTaskHandle TaskHandle_t
 #  define xQueueHandle QueueHandle_t
 #endif
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 2 , 1)
+#  define portTickType TickType_t
+#  define portTICK_RATE_MS portTICK_PERIOD_MS
+#endif
 
+#define A2DP_DEPRECATED __attribute__((deprecated))
 
 /**
  * @brief     handler for the dispatched work
@@ -143,13 +156,13 @@ class BluetoothA2DPCommon {
         virtual void end(bool releaseMemory=false);
 
         /// Checks if A2DP is connected
-        virtual  bool is_connected() = 0;
+        virtual  bool is_connected() { return connection_state == ESP_A2D_CONNECTION_STATE_CONNECTED;}
 
-        /// Sets the volume (range 0 - 255)
+        /// Sets the volume (range 0 - 127)
         virtual void set_volume(uint8_t volume){
-            ESP_LOGI(BT_AV_TAG, "set_volume: %d", volume);
-            volume_value = volume;
-            volume_control()->set_volume(volume);
+            volume_value = std::min((int)volume, 0x7F);
+            ESP_LOGI(BT_AV_TAG, "set_volume: %d", volume_value);
+            volume_control()->set_volume(volume_value);
             volume_control()->set_enabled(true);
             is_volume_used = true;
         }
@@ -196,7 +209,7 @@ class BluetoothA2DPCommon {
         /// converts a esp_bd_addr_t to a string - the string is 18 characters long! 
         const char* to_str(esp_bd_addr_t bda);
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
         /// converts esp_avrc_playback_stat_t to a string
         const char* to_str(esp_avrc_playback_stat_t state);
 #endif
@@ -227,7 +240,7 @@ class BluetoothA2DPCommon {
             return &last_connection;
         }
 
-#ifdef ESP_IDF_4
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
     /// Bluetooth discoverability
     virtual void set_discoverability(esp_bt_discovery_mode_t d);
 #endif
@@ -244,6 +257,22 @@ class BluetoothA2DPCommon {
 
     /// clean last connection (delete)
     virtual void clean_last_connection();
+
+    /// Defines the default bt mode. The default is ESP_BT_MODE_CLASSIC_BT: use this e.g. to set to ESP_BT_MODE_BTDM
+    virtual void set_default_bt_mode(esp_bt_mode_t mode){
+        bt_mode = mode;
+    }
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 2 , 1)
+    /// Defines the esp_bluedroid_config_t: Available from IDF 5.2.1
+    void set_bluedroid_config_t(esp_bluedroid_config_t cfg){
+        bluedroid_config = cfg;
+    }
+#endif
+    /// calls vTaskDelay to pause for the indicated number of milliseconds
+    void delay_ms(uint32_t millis);
+    /// Provides the time in milliseconds since the last system boot
+    unsigned long get_millis();
 
     protected:
         const char* bt_name = {0};
@@ -276,10 +305,14 @@ class BluetoothA2DPCommon {
 
         int event_queue_size = 20;
         int event_stack_size = 3072;
-
-
-#ifdef ESP_IDF_4
+        esp_bt_mode_t bt_mode  = ESP_BT_MODE_CLASSIC_BT;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
         esp_bt_discovery_mode_t discoverability = ESP_BT_GENERAL_DISCOVERABLE;
+#endif
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 2, 1)
+        esp_bluedroid_config_t bluedroid_config {
+            .ssp_en = true
+        };
 #endif
 
         virtual esp_err_t esp_a2d_connect(esp_bd_addr_t peer) = 0;
@@ -289,11 +322,15 @@ class BluetoothA2DPCommon {
         virtual bool has_last_connection();
         // change the scan mode
         virtual void set_scan_mode_connectable(bool connectable);
-        virtual void set_scan_mode_connectable_default();
+        virtual void set_scan_mode_connectable_default() = 0;
 
         /// provides access to the VolumeControl object
         virtual A2DPVolumeControl* volume_control() {
             return volume_control_ptr !=nullptr ? volume_control_ptr : &default_volume_control;
         }
+
+        virtual bool bt_start();
+        virtual esp_err_t bluedroid_init();
+        
 };
 
