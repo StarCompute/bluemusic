@@ -10,7 +10,7 @@ a2dp ：蓝牙传输音频资料和字幕信息
 
 tft_espi : tft 屏幕驱动 
 
-xfont  : 显示汉字 ,详细使用请参考 
+xfont  : 显示汉字 ,详细使用请参考 https://github.com/StarCompute/tftziku 
 
 注意，xfont的初始化必须先执行。
 
